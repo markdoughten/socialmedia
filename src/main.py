@@ -1,141 +1,96 @@
 # custom libraries
-from lib import questions
-import ollama
-import pandas as pd
-import matplotlib.pyplot as plt
+from lib import topics
+from lib import linkedin
+import os
+import time
 import random
+import pandas as pd
+from openai import OpenAI
+import requests
+import base64
 
-def run(models, questions, gpu=True, write=False, graph=True, asks=1, display=['bar']):
-    
-    # ask the models the prompts 
-    performances = []
-    for question in questions:
-        remaining = asks  # reset counter for each question
-        while remaining > 0:
-            for model in models:
-                performances.append(run_model(model, gpu, question))
-            remaining -= 1
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # calculate metrics 
-    metrics = calculate(performances)
-    metrics = pd.DataFrame(metrics)
-   
-    if graph: 
-        for kind in display: 
-            # plot time and count 
-            plot(metrics, 'Seconds', ['total_duration', 'load_duration', 'prompt_eval_duration', 'eval_duration'], gpu, kind, write, num_asks)
-            plot(metrics, 'Count', ['prompt_eval_count', 'eval_count'], gpu, kind, write, num_asks)
-            plot(metrics, 'Tokens per Second', ['prompt_eval_per_second',  'eval_per_second', 'total_per_second'], gpu, kind, write, num_asks)
-     
-    return metrics
+def generate_prompt(articles):
 
-def run_model(model, gpu, prompt):
+    prompt = "Create a professional LinkedIn post summarizing the following data and analytics news.\n\n"
 
-    output = {'prompt': prompt, 'gpu': gpu}
+    for article in articles:
+        prompt += (
+            f"Source: {article['source']}\n"
+            f"Title: {article['title']}\n"
+            f"Link: {article['link']}\n"
+            f"Summary: {article['summary']}\n\n"
+        )
 
-    if gpu:
-        data = ollama.generate(model=model, prompt=prompt, options={'main_gpu':0, 'num_gpu':33})
-    else:
-        data = ollama.generate(model=model, prompt=prompt, options={'main_gpu':0, 'num_gpu':0})
+    prompt += (
+        "Write a concise LinkedIn post highlighting key insights. "
+        "Use a professional tone and include 3 relevant hashtags."
+    )
 
-    return merge_two_dicts(output, data)
+    return prompt
 
-def calculate(performances):
-    
-    nanoseconds = 10**9
-    for model in performances:
-        
-        keys = ['load_duration', 'total_duration', 'prompt_eval_duration', 'eval_duration']
-        
-        # convert to seconds
-        for key in keys:
-            model[key] = model[key]/nanoseconds
-        
-        # calculate time per count
-        model['prompt_eval_per_second'] = model['prompt_eval_count']/model['prompt_eval_duration']
-        model['eval_per_second'] = model['eval_count']/model['eval_duration']
-        model['total_per_second'] = (model['eval_count']+model['prompt_eval_count'])/model['total_duration']
+def generate_text(model, prompt):
 
-    return performances
-    
-def plot(metrics, units, keys, gpu, kind, write, asks):
-   
-    keys.append('model')
-    info = f"Q:{len(metrics['prompt'].unique())}, A:{asks}"
-    metrics = metrics[keys] 
+    response = client.responses.create(
+        model=model,
+        input=prompt
+    )
 
-    fig, ax = plt.subplots(figsize=(8, 8), dpi=96)
+    text = response.output_text
 
-    if kind == 'box':
-         metrics.set_index('model').plot(kind=kind, ax=ax, rot=0)
-    else:
-        metrics.set_index('model').groupby(level=0).median().plot(kind=kind, ax=ax, rot=0)
-    
-    if gpu:
-        plt.title(f'GPU: {info}')
-    else: 
-        plt.title(f'CPU: {info}')    
-     
-    plt.ylabel(units)
-    plt.tight_layout()
+    return text
 
-    if write:
-       save(chart=True, gpu=gpu, plt=plt)
+def save_image(image, filename="../data/post_image.png"):
+    with open(filename, "wb") as f:
+        f.write(base64.b64decode(image))
+    return filename
 
-    #plt.show()
-    
-    return
+def generate_image(model, text):
 
-def save(df=None, gpu=None, chart=False, plt=None):
-    
-    if gpu:
-        prefix = 'gpu'
-    else:
-        prefix = 'cpu'
-    
-    if chart:
-        plt.savefig(f'../data/charts/{prefix}/{random.randint(1, 1000)}.png')
-    else:
-        df.to_csv(f'../data/metrics.csv', index=False)
-    
-    return 
+    prompt = f"""
+    LinkedIn professional illustration.
 
-def merge_two_dicts(x, y):
-    z = x.copy()
-    z.update(y)
-    return z
+    Topic:
+    {text}
 
-def get_models():
-    models = []
-    for model in ollama.list()['models']:
-        models.append(model['name'])
-    return models
+    Style:
+    - modern tech illustration
+    - minimal corporate design
+    - blue/white analytics dashboard theme
+    - abstract data visualization elements
+    - suitable for a LinkedIn business post
+    """
+
+    response = client.images.generate(
+        model=model,
+        prompt=prompt,
+        size="1024x1024"
+    )
+
+    image = response.data[0].b64_json
+
+    return image 
 
 if __name__ == '__main__':
     
+    os.makedirs("../data", exist_ok=True)
     random_select = True
     write = True
-    gpu = True
-    num_questions = 25
-    num_asks = 1
-    models = get_models()
-    questions = questions.get_questions()
-    both = True
-
-    if num_questions > len(questions):
-        print('n is too big, only {len(questions)}')
-        exit()
-
-    if random_select:
-        questions = random.sample(questions, k=num_questions)
-   
-    metrics = run(models, questions, gpu, write, graph=True, asks=num_asks, display=['box', 'bar'])
+    text_model = 'gpt-5-2025-08-07'
+    image_model = 'gpt-image-1'
+    articles = topics.fetch_articles(limit_per_feed=1)
+    upload = True
+    save = True
+    linkedin_api_key = os.getenv("LINKEDIN_ACCESS_TOKEN")
     
-    # run on the opposite 
-    if both:
-        gpu = not gpu
-        metrics = pd.concat([run(models, questions, gpu, write, graph=True, asks=num_asks, display=['box', 'bar']), metrics])
-   
-    if write:
-        save(metrics, gpu) 
+    prompt = generate_prompt(articles)
+    text = generate_text(text_model, prompt)
+    image = generate_image(image_model, text)
 
+    if save:
+        save_image(image)
+
+    if upload:
+        confirmation = linkedin.send_to_linkedin(linkedin_api_key, text, image)
+        print(confirmation)
