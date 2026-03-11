@@ -43,7 +43,7 @@ def generate_text(model, prompt):
 
 def save_image(image, filename="../data/post_image.png"):
     with open(filename, "wb") as f:
-        f.write(base64.b64decode(image))
+        f.write(image)
     return filename
 
 def generate_image(model, text):
@@ -70,7 +70,7 @@ def generate_image(model, text):
 
     image = response.data[0].b64_json
 
-    return image 
+    return base64.b64decode(image)
 
 if __name__ == '__main__':
     

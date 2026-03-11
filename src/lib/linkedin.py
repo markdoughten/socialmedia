@@ -96,8 +96,7 @@ def send_to_linkedin(linkedin_api_key, text, image):
     access_token = linkedin_api_key
     person_urn = _get_person_urn(access_token)
     asset, upload_url = _register_upload(access_token, person_urn)
-    image_bytes = base64.b64decode(image)
-    _upload_image(upload_url, access_token, image_bytes)
+    _upload_image(upload_url, access_token, image)
     response = _create_post(access_token, person_urn, text, asset)
 
     return response
